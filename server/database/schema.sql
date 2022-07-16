@@ -229,4 +229,22 @@ CREATE TABLE delivery_complaint (
 
 
 /* Triggers */
+CREATE OR REPLACE FUNCTION check_shop_products()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF (SELECT COUNT(*) FROM sells WHERE shop_id = NEW.id) < 1 THEN
+        RAISE EXCEPTION 'Shop does not have products';
+        ROLLBACK;
+        RETURN NULL;
+    END IF;
+
+    RETURN NEW;
+END;
+
+$$ LANGUAGE plpgsql;
+
+CREATE CONSTRAINT TRIGGER check_shop_products_trigger
+AFTER INSERT OR UPDATE OR DELETE ON shop
+DEFERRABLE INITIALLY DEFERRED 
+FOR EACH ROW EXECUTE PROCEDURE check_shop_products();
 
