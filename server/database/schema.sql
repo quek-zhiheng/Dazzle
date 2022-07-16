@@ -263,6 +263,7 @@ BEGIN
 
     RETURN NEW;
 END;
+$$ LANGUAGE plpgsql;
 
 
 CREATE CONSTRAINT TRIGGER check_order_trigger
@@ -273,3 +274,34 @@ FOR EACH ROW EXECUTE PROCEDURE check_order();
 
 
 -- Check that coupon is applied on order that exceeds min order amount
+
+CREATE OR REPLACE FUNCTION check_coupon_validity()
+RETURNS TRIGGER AS $$
+DECLARE
+    min_spending NUMERIC;
+    current_spending NUMERIC;
+BEGIN
+    -- assume that user does have the coupon
+    SELECT COALESCE(min_order_amount, 0) INTO min_spending 
+    FROM coupon_batch
+    WHERE coupon.id = NEW.coupon_id;
+
+    SELECT COALESCE(SUM(orderline.quantity * sells.price), 0) INTO current_spending
+    FROM orderline LEFT JOIN sells ON orderline.shop_id = sells.shop_id AND orderline.product_id = sells.product_id AND orderline.sell_timestamp = sells.sell_timestamp
+    WHERE orderline.order_id = NEW.id;
+
+    IF current_spending < min_spending THEN
+        RAISE EXCEPTION 'ERROR: COUPON CANNOT BE APPLIED ON ORDER THAT EXCEEDS MIN ORDER AMOUNT.';
+        ROLLBACK;
+        RETURN NULL;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE CONSTRAINT TRIGGER check_coupon_validity_trigger
+AFTER INSERT OR UPDATE OR DELETE ON orders
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE PROCEDURE check_coupon_validity();
+
+
