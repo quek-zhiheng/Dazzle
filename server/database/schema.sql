@@ -229,10 +229,12 @@ CREATE TABLE delivery_complaint (
 
 
 /* Triggers */
+
+-- To check if store is selling at least one product
 CREATE OR REPLACE FUNCTION check_shop_products()
 RETURNS TRIGGER AS $$
 BEGIN
-    IF (SELECT COUNT(*) FROM sells WHERE shop_id = NEW.id) < 1 THEN
+    IF (SELECT COUNT(*) FROM sells WHERE sells.shop_id = NEW.id) < 1 THEN
         RAISE EXCEPTION 'ERROR: SHOP DOES NOT HAVE PRODUCTS, CANCELLING PROCESS...';
         ROLLBACK;
         RETURN NULL;
@@ -248,3 +250,26 @@ AFTER INSERT OR UPDATE OR DELETE ON shop
 DEFERRABLE INITIALLY DEFERRED 
 FOR EACH ROW EXECUTE PROCEDURE check_shop_products();
 
+
+-- To check if order contains at least one product
+CREATE OR REPLACE FUNCTION check_order()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF (SELECT COUNT(*) FROM orderline WHERE orderline.order_id = NEW.id) < 1 THEN
+        RAISE EXCEPTION 'ERROR: ORDER DOES NOT HAVE PRODUCTS, CANCELLING PROCESS...';
+        ROLLBACK;
+        RETURN NULL;
+    END IF;
+
+    RETURN NEW;
+END;
+
+
+CREATE CONSTRAINT TRIGGER check_order_trigger
+AFTER INSERT OR UPDATE OR DELETE ON orders
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE PROCEDURE check_order();
+
+
+
+-- Check that coupon is applied on order that exceeds min order amount
