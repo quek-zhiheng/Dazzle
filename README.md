@@ -1,4 +1,4 @@
-# Ah_Dazzle (formerly Adazal in CS2102)
+# Ah! Dazzle (formerly Adazal in CS2102)
 
 !! <i>It is still a project in progress</i> !!
 
