@@ -233,7 +233,7 @@ CREATE OR REPLACE FUNCTION check_shop_products()
 RETURNS TRIGGER AS $$
 BEGIN
     IF (SELECT COUNT(*) FROM sells WHERE shop_id = NEW.id) < 1 THEN
-        RAISE EXCEPTION 'Shop does not have products';
+        RAISE EXCEPTION 'ERROR: SHOP DOES NOT HAVE PRODUCTS, CANCELLING PROCESS...';
         ROLLBACK;
         RETURN NULL;
     END IF;
