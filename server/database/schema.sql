@@ -234,7 +234,7 @@ CREATE TABLE delivery_complaint (
 CREATE OR REPLACE FUNCTION check_shop_products()
 RETURNS TRIGGER AS $$
 BEGIN
-    IF (SELECT COUNT(*) FROM sells WHERE sells.shop_id = NEW.id) < 1 THEN
+    IF (SELECT COUNT(*) FROM sells WHERE shop_id = NEW.id) < 1 THEN
         RAISE EXCEPTION 'ERROR: SHOP DOES NOT HAVE PRODUCTS, CANCELLING PROCESS...';
         ROLLBACK;
         RETURN NULL;
@@ -246,7 +246,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE CONSTRAINT TRIGGER check_shop_products_trigger
-AFTER INSERT OR UPDATE OR DELETE ON shop
+AFTER INSERT ON shop
 DEFERRABLE INITIALLY DEFERRED 
 FOR EACH ROW EXECUTE PROCEDURE check_shop_products();
 
@@ -255,7 +255,7 @@ FOR EACH ROW EXECUTE PROCEDURE check_shop_products();
 CREATE OR REPLACE FUNCTION check_order()
 RETURNS TRIGGER AS $$
 BEGIN
-    IF (SELECT COUNT(*) FROM orderline WHERE orderline.order_id = NEW.id) < 1 THEN
+    IF (SELECT COUNT(*) FROM orderline WHERE order_id = NEW.id) < 1 THEN
         RAISE EXCEPTION 'ERROR: ORDER DOES NOT HAVE PRODUCTS, CANCELLING PROCESS...';
         ROLLBACK;
         RETURN NULL;
@@ -267,7 +267,7 @@ $$ LANGUAGE plpgsql;
 
 
 CREATE CONSTRAINT TRIGGER check_order_trigger
-AFTER INSERT OR UPDATE OR DELETE ON orders
+AFTER INSERT ON orders
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE PROCEDURE check_order();
 
@@ -287,7 +287,7 @@ BEGIN
     WHERE coupon.id = NEW.coupon_id;
 
     SELECT COALESCE(SUM(orderline.quantity * sells.price), 0) INTO current_spending
-    FROM orderline LEFT JOIN sells ON orderline.shop_id = sells.shop_id AND orderline.product_id = sells.product_id AND orderline.sell_timestamp = sells.sell_timestamp
+    FROM orderline LEFT JOIN sells ON (orderline.shop_id = sells.shop_id AND orderline.product_id = sells.product_id AND orderline.sell_timestamp = sells.sell_timestamp)
     WHERE orderline.order_id = NEW.id;
 
     IF current_spending < min_spending THEN
@@ -295,6 +295,8 @@ BEGIN
         ROLLBACK;
         RETURN NULL;
     END IF;
+
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -305,3 +307,51 @@ DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE PROCEDURE check_coupon_validity();
 
 
+
+-- check refund eligibility
+CREATE OR REPLACE FUNCTION check_refund_eligibility()
+RETURNS TRIGGER AS $$
+DECLARE
+    delivered_date DATE;
+    refunded_quantity_quota INT;
+BEGIN
+    refunded_quantity_quota := SELECT quantity
+                               FROM orderline
+                               WHERE order_id = NEW.id;
+                               AND shop_id = NEW.shop_id
+                               AND product_id = NEW.product_id
+                               AND sell_timestamp = NEW.sell_timestamp
+
+    refunded_quantity_quota := refunded_quantity_quota - SELECT SUM(quantity)
+                                                         FROM refund_request
+                                                         WHERE order_id = NEW.order_id
+                                                         AND shop_id = NEW.shop_id
+                                                         AND product_id = NEW.product_id
+                                                         AND sell_timestamp = NEW.sell_timestamp
+                                                         AND status <> 'rejected'
+
+    purchase_date := SELECT delivery_date
+                     FROM orderline
+                     WHERE order_id = NEW.order_id
+                     AND shop_id = NEW.shop_id
+                     AND product_id = NEW.product_id
+                     AND sell_timestamp = NEW.sell_timestamp
+                     AND status = 'delivered'
+
+    IF ((purchase_date IS NULL) OR (purchase_date + 30 < NEW.date)) THEN
+        RAISE EXCEPTION 'ERROR: REFUND CANNOT BE APPLIED ON ORDER THAT WAS NOT DELIVERED MORE THAN 30 DAYS AGO.';
+        ROLLBACK;
+        RETURN NULL;
+    ELSEIF (refunded_quantity_quota < NEW.quantity) THEN
+        RAISE EXCEPTION 'ERROR: REFUND QUANTITY REQUESTED EXCEEDS QUANTITY OF PRODUCT ORDERED.';
+        ROLLBACK;
+        RETURN NULL;
+    END IF;
+    RETURN NEW;
+
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE CONSTANT TRIGGER check_refund_eligibility_trigger
+BEFORE INSERT ON refund_request
+FOR EACH ROW EXECUTE PROCEDURE check_refund_eligibility();
