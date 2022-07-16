@@ -228,7 +228,7 @@ CREATE TABLE delivery_complaint (
 
 
 
-/* Triggers */
+/* ================================================= Triggers ================================================= */
 
 -- To check if store is selling at least one product
 CREATE OR REPLACE FUNCTION check_shop_products()
@@ -308,33 +308,23 @@ RETURNS TRIGGER AS $$
 DECLARE
     delivered_date DATE;
     refunded_quantity_quota INT;
+    requested_refund_quantity INT;
 BEGIN
-    refunded_quantity_quota := SELECT quantity
-                               FROM orderline
-                               WHERE order_id = NEW.id;
-                               AND shop_id = NEW.shop_id
-                               AND product_id = NEW.product_id
-                               AND sell_timestamp = NEW.sell_timestamp
+    SELECT quantity INTO refunded_quantity_quota
+    FROM orderline
+    WHERE order_id = NEW.id AND shop_id = NEW.shop_id AND product_id = NEW.product_id AND sell_timestamp = NEW.sell_timestamp
 
-    refunded_quantity_quota := refunded_quantity_quota - SELECT SUM(quantity)
-                                                         FROM refund_request
-                                                         WHERE order_id = NEW.order_id
-                                                         AND shop_id = NEW.shop_id
-                                                         AND product_id = NEW.product_id
-                                                         AND sell_timestamp = NEW.sell_timestamp
-                                                         AND status <> 'rejected'
+    SELECT SUM(quantity) INTO requested_refund_quantity
+    FROM refund_request
+    WHERE order_id = NEW.order_id AND shop_id = NEW.shop_id AND product_id = NEW.product_id AND sell_timestamp = NEW.sell_timestamp AND status <> 'rejected'
 
-    purchase_date := SELECT delivery_date
-                     FROM orderline
-                     WHERE order_id = NEW.order_id
-                     AND shop_id = NEW.shop_id
-                     AND product_id = NEW.product_id
-                     AND sell_timestamp = NEW.sell_timestamp
-                     AND status = 'delivered'
+    SELECT delivery_date INTO delivered_date
+    FROM orderline
+    WHERE order_id = NEW.order_id AND shop_id = NEW.shop_id AND product_id = NEW.product_id AND sell_timestamp = NEW.sell_timestamp AND status = 'delivered'
 
     IF ((purchase_date IS NULL) OR (purchase_date + 30 < NEW.date)) THEN
         RAISE EXCEPTION 'ERROR: REFUND CANNOT BE APPLIED ON ORDER THAT WAS NOT DELIVERED MORE THAN 30 DAYS AGO.';
-    ELSEIF (refunded_quantity_quota < NEW.quantity) THEN
+    ELSEIF (refunded_quantity_quota - requested_refund_quantity < NEW.quantity) THEN
         RAISE EXCEPTION 'ERROR: REFUND QUANTITY REQUESTED EXCEEDS QUANTITY OF PRODUCT ORDERED.';
     END IF;
     RETURN NEW;
@@ -345,3 +335,116 @@ $$ LANGUAGE plpgsql;
 CREATE CONSTANT TRIGGER check_refund_eligibility_trigger
 BEFORE INSERT ON refund_request
 FOR EACH ROW EXECUTE PROCEDURE check_refund_eligibility();
+
+
+
+-- check comment
+CREATE OR REPLACE FUNCTION check_comment_func()
+RETURNS TRIGGER AS $$
+BEGIN
+	IF (NEW.id NOT IN (SELECT id FROM review) AND NEW.id NOT IN (SELECT id FROM reply)) THEN
+		RAISE EXCEPTION 'ERROR: COMMENT NEEDS TO BE REPLY OR REVIEW.';
+	ELSIF (NEW.id IN (SELECT id FROM review))
+	AND (SELECT COUNT(*) FROM review_version WHERE review_version.review_id = NEW.id) < 1 THEN
+		RAISE EXCEPTION 'ERROR: REVIEW DOES NOT HAVE REVIEW HISTORY.';
+	ELSIF (NEW.id IN (SELECT id FROM reply))
+	AND (SELECT COUNT(*) FROM reply_version WHERE reply_version.reply_id = NEW.id) < 1 THEN
+		RAISE EXCEPTION 'ERRORL REPLY DOES NOT HAVE REPLY HISTORY.';
+	END IF;
+	RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE CONSTRAINT TRIGGER check_comment_trigger
+AFTER INSERT ON comment
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION check_comment_func();
+
+
+
+--check comment
+CREATE OR REPLACE FUNCTION check_review_func()
+RETURNS TRIGGER AS $$
+DECLARE
+	temp_id INT := 0;
+BEGIN
+	SELECT user_id INTO temp_id FROM comment
+	WHERE comment.id = NEW.id;
+	
+	IF NEW.id IN (SELECT id from reply) THEN
+		RAISE EXCEPTION 'ERROR: REVIEW CANNOT BE A REPLY.';
+	ELSIF (ROW (NEW.shop_id, NEW.product_id, NEW.sell_timestamp) NOT IN (
+		SELECT shop_id, product_id, sell_timestamp
+		FROM orderline INNER JOIN orders ON (orderline.order_id = orders.id)
+		WHERE orders.user_id = temp_id
+	)) THEN 
+		RAISE EXCEPTION 'ERROR: REVIEW CANNOT BE MADE ON PRODUCT THAT WAS NOT PURCHASED.';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER check_review_trigger
+BEFORE INSERT ON review
+FOR EACH ROW EXECUTE FUNCTION check_review_func();
+
+
+
+
+--check reply
+CREATE OR REPLACE FUNCTION check_reply_func() RETURNS TRIGGER AS $$
+BEGIN
+	IF NEW.id IN (SELECT id from review) THEN
+		RAISE EXCEPTION 'ERROR: REPLY CANNOT BE A REVIEW.';
+	END IF;
+	RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER check_reply_trigger
+BEFORE INSERT ON reply
+FOR EACH ROW EXECUTE FUNCTION check_reply_func();
+
+
+
+-- check delivery complaints prereqs -> needs to be delivered first
+CREATE OR REPLACE FUNCTION check_delivery_status()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.id NOT IN (
+        SELECT id
+        FROM orderline
+        WHERE (order_id, shop_id, product_id, sell_timestamp) = (NEW.order_id, NEW.shop_id, NEW.product_id, NEW.sell_timestamp)
+        AND status = 'delivered') THEN
+        RAISE EXCEPTION 'ERROR: DELIVERY COMPLAINT CANNOT BE MADE ON ORDER THAT HAS NOT BEEN DELIVERED.';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER check_delivery_status_trigger
+BEFORE INSERT ON delivery_complaint
+FOR EACH ROW EXECUTE PROCEDURE check_delivery_status();
+
+
+
+-- check that complaint is either delivery, shop-related or comment related
+CREATE OR REPLACE FUNCTION check_complaint_type()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF (COALESCE(
+        SELECT 1 FROM delivery_complaint WHERE id = NEW.id
+        +
+        SELECT 1 FROM shop_complaint WHERE id = NEW.id
+        +
+        SELECT 1 FROM shop_complaint WHERE id = NEW.id,
+        0) <> 1) THEN
+        RAISE EXCEPTION 'ERROR: COMPLAINT MUST BE ONLY ONE OF FOLLOWING TYPES: TYPE DELIVERY, SHOP-RELATED OR COMMENT-RELATED.';
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE CONSTRAINT TRIGGER check_complaint_type_trigger
+AFTER INSERT ON delivery_complaint
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE PROCEDURE check_complaint_type();
