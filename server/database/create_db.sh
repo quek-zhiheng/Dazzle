@@ -7,7 +7,7 @@ password=$2
 
 
 # Creating database
-postgres psql -c "CREATE DATABASE ${db_name} WITH ENCODING 'UTF8'"
+postgres psql -c "CREATE DATABASE ${db_name} WITH ENCODING 'UTF8' TEMPLATE schema"
 
 # creating admin account for server admin
 psql -c "CREATE USER ${1} WITH ENCRYPTED PASSWORD ${2};"
