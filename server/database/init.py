@@ -26,7 +26,7 @@ def connect_db(initialise=False):
     
     try:
         cur.execute(open("schema.sql", "r").read())
-    except Exception as e:
+    except (Exception, psycopg2.DatabaseError) as e:
         return 'Unable to create tables. Reason: %s' % (e)
     
     print('Tables created.')

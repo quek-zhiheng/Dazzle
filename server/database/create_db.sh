@@ -10,8 +10,8 @@ password=$2
 postgres psql -c "CREATE DATABASE ${db_name} WITH ENCODING 'UTF8'"
 
 # creating admin account for server admin
-CREATE USER $1 WITH ENCRYPTED PASSWORD $2;
-GRANT ALL PRIVELEGES ON DATABASE ${db_name} TO $1;
+psql -c "CREATE USER ${1} WITH ENCRYPTED PASSWORD ${2};"
+psql -c "GRANT ALL PRIVELEGES ON DATABASE ${db_name} TO ${1};"
 
 \q
 
