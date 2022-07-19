@@ -23,11 +23,12 @@ def connect_db():
     return conn
 
 conn = connect_db()
+cur = conn.cursor()
 
 ## defining api endpoints
-@app.route('/')
-def index():
-    cur = conn.cursor()
+@app.route('/api/v1/users', methods=['GET'])
+def get_users():
+    
 
 
 
