@@ -1,8 +1,10 @@
+import Navbar from "./components/navbar"; 
+
 function App() {
   return (
     <div className="App">
       <header className="App-header">
-        <a href='/'>Dazzle</a>
+        <Navbar />
       </header>
     </div>
   );
