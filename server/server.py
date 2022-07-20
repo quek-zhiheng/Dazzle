@@ -28,7 +28,3 @@ cur = conn.cursor()
 ## defining api endpoints
 @app.route('/api/v1/users', methods=['GET'])
 def get_users():
-    
-
-
-
