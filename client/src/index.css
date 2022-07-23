@@ -7,4 +7,10 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+header {
+  background-color: #425664;
+  padding: 40px;
+  text-align: left;
+}
 
+.products
